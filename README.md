@@ -1,13 +1,3 @@
-# bookIPS-Solvook-LLM (Edu-Llama)
-
-> [TIPS] 교육콘텐츠IP 라이선싱 플랫폼 고도화를 위한 컴포넌트 단위 콘텐츠 관계성 분석 AI기술개발
-> [TIPS] AI Technology Development for Component-Level Content Relationship Analysis to Enhance Educational Content IP Licensing Platform
-
-Developing a LLM based on LLaMA 3.1 for tasks related to korean - english educational contents.
-
-<br>
-
-----
 # 1. Setup and Preparation
 ## get Liscense
 Our model is based on LLaMA 3.1 8B Instruct, for using llama 3.1 edu model you have to get liscense and access token
@@ -38,26 +28,6 @@ Use `pip install --no-deps -e .` to resolve package conflicts.
 
 # 2. Fine-tuning Edu-Llama
 
-## Data preparation
-* Download pre-procssed dataset in [link](https://drive.google.com/drive/folders/1Y74O82TE-1f_6bq8w2r7JWjxdj7i42Rw?usp=drive_link) and place the provided data in the `/data` folder.
-    * If you want to pre-process dataset by yourself, run `generate_instruction_set.py`
-    ```
-    generate_instruction_set.py --working_dir=<DATA_PATH>
-    ```
-    * ```DATA_PATH``` &mdash; The path where 'Solvook_handout_DB_english.xlsx' exists.
-
-*  The data information has been entered in [data/dataset_info.json](data/dataset_info.json), so please place the data files as they are without modifying them.
-
-
-## Model preparation
-* You can simply download fine-tuned model in [link](https://drive.google.com/drive/folders/1RgNjZTlmye6kt4I0o6T-z9KIYCUzq3vo?usp=drive_link) and place the provided adapter model files in a specific folder. The location of the adapter model files doesn’t matter, but when performing inference, apply the adapter model file path to adapter_name_or_path. By default, it is set to **saves/llama3.1_edu**.
-* If you want to fine-tune model by yourself, please refer to [Train](##train).
-
-
-> [!Note]
-> **Check whether your dataset and model path are on right place.**
-
-
 ## Train
 * If you want to edit argument for training, edit file **examples/train_lora/llama3_lora_sft.yaml**
 
@@ -79,17 +49,12 @@ bash finetune.sh
 # 3. Run RAG
 
 ## Pre-process dataset for RAG
-* Download pre-processed dataset for RAG in [link](https://drive.google.com/drive/folders/1Y74O82TE-1f_6bq8w2r7JWjxdj7i42Rw?usp=drive_link).
-    * Three files: `solvook_handout_tr.csv`, `solvook_handout_val.csv`, and `solvook_handout_te.csv`
-    * If you want to pre-process dataset by yourself, run `preprocess_rag.py`
-    ```
-    preprocess_rag.py --data_path=<DATA_PATH>
-    ```
-    * ```DATA_PATH``` &mdash; The path where 'Solvook_handout_DB_english.xlsx' exists.
+Run `preprocess_rag.py`
+```
+preprocess_rag.py --data_path=<DATA_PATH>
+```
+* ```DATA_PATH``` &mdash; The path where 'Solvook_handout_DB_english.xlsx' exists.
 
-
-> [!Important]
-> **We align the data split with instruction set and RAG set.**
 
 
 ## Set Vector DB
@@ -98,8 +63,8 @@ bash finetune.sh
     vector_db.py --query_path=<QUERY_PATH> --db_path=<DB_PATH> --openai_api_key=<API_KEY> \
                  --task=<TASK> --top_k=<TOP_K> --search_type=<SEARCH_TYPE>
     ```
-    * ```QUERY_PATH``` &mdash; The path of '`solvook_handout_te.csv`' exists.
-    * ```DB_PATH``` &mdash; The path of '`solvook_handout_tr.csv`' exists.
+    * ```QUERY_PATH``` &mdash; The path of query.
+    * ```DB_PATH``` &mdash; The path of db.
     * ```API_KEY``` &mdash; API key for openai
     * ```TASK``` &mdash; Designate task (Options: [**1**: Paragraph matching, **2**: Relation matching, **3**: Skill matching, **4**: Method matching])
     * ```TOP_K``` &mdash; The number of retrieved contents (Default: 6)
@@ -121,8 +86,8 @@ bash finetune.sh
                  --wandb_project=<WANDB_PROJECT> \
                  --wandb_entity=<WANDB_ENTITY>
     ```
-    * ```QUERY_PATH``` &mdash; The path of '`solvook_handout_te.csv`' exists.
-    * ```VECTOR_DB_PATH``` &mdash; The path of '`vector_db.json`' exists.
+    * ```QUERY_PATH``` &mdash; The path of query.
+    * ```VECTOR_DB_PATH``` &mdash; The path of db.
     * ```API_KEY``` &mdash; API key for openai
     * ```TEMPERATURE``` &mdash; Modulate the diversity of LLM output. Higher value allows more diverse output.
     * ```TASK``` &mdash; Designate task (Options: [**1**: Paragraph matching, **2**: Relation matching, **3**: Skill matching, **4**: Method matching])
@@ -155,27 +120,6 @@ bash finetune.sh
 
 ---
 <br>
-
-
-
-
-# 4. For LLM evaluation in benchmark set
-> [!Caution]
-> Because of using different package, you have to seperate environment for fine tuning (inference) and benchmark dataset evaluation
-```bash
-conda deactivate
-conda create -n <name> python==3.10
-conda activate <name>
-cd lm-evaluation-harness
-pip install -e .
-```
-
-* edit `peft_path` from **llama3.1_edu_evaluation.sh** for your adpater path
-* If you want to edit argument for evaluation, edit file **llama3.1_edu_evaluation.sh**
-
-```bash
-bash llama3.1_edu_evaluation.sh
-```
 
 
 # Acknowledgements
