@@ -12,11 +12,9 @@ Reference Docs
 import pandas as pd
 import numpy as np
 import re, os, json, time
-import wandb
 from tqdm import tqdm
 import os.path as osp
 
-### Load Data and Make Loader ##embeddings as unique 본문, 질문, paragraphs
 def load_solvook_data(args):
 
     # load vector db
@@ -26,7 +24,7 @@ def load_solvook_data(args):
     # load query
     query_db = pd.read_csv(args.query_path)
     for i in range(len(query_db)):
-        query_db.loc[i, 'query'] = f'"본문" : "{query_db.loc[i, "본문"]}", "질문" : "{query_db.loc[i, "질문"]}"'
+        query_db.loc[i, 'query'] = f'"Passage" : "{query_db.loc[i, "passage"]}", "Question" : "{query_db.loc[i, "question"]}"'
     
     if args.task == 2:
         query_db = query_db[query_db['relation']!=0].reset_index()
@@ -127,9 +125,9 @@ def generation(args, retriever_dict, query_db):
         ## Top-K search
         #############################################################################
         if args.task in [1, 2]:
-            top_mt = retriever_dict['mt_db_retriever'].invoke(query_db['본문'][idx])          # 본문 v.s. 본문*
-            top_parap = retriever_dict['parap_db_retriever'].invoke(query_db['본문'][idx])    # paragraph v.s. 본문*
-        top_ques = retriever_dict['ques_db_retriever'].invoke(query_db['질문'][idx])      # 질문 v.s. 질문*
+            top_mt = retriever_dict['mt_db_retriever'].invoke(query_db['passage'][idx])
+            top_parap = retriever_dict['parap_db_retriever'].invoke(query_db['paragraph'][idx])
+        top_ques = retriever_dict['ques_db_retriever'].invoke(query_db['question'][idx])      # 질문 v.s. 질문*
         
         top = top_ques
         if args.task in [1, 2]:
@@ -140,23 +138,20 @@ def generation(args, retriever_dict, query_db):
         for k in range(len(top)):
             top_content_ = f"["
             if args.task in [1, 2]:
-                # 본문 id, 본문 (paragraphs)
-                top_content_ = f"'본문 id': '{top[k].metadata['textbook_id']}_{top[k].metadata['unit_id']}_{top[k].metadata['story_id']}_{top[k].metadata['paragraph_id']}'. "
+                top_content_ = f"'Paragraph id': '{top[k].metadata['textbook_id']}_{top[k].metadata['unit_id']}_{top[k].metadata['story_id']}_{top[k].metadata['paragraph_id']}'. "
                 try:
                     try:
-                        top_content_ += f"'본문': '{top[k].metadata['paragraphs']}'. "            
+                        top_content_ += f"'Paragraph': '{top[k].metadata['paragraphs']}'. "            
                     except:
-                        top_content_ += f"'본문': '{top[k].page_content}'. "
+                        top_content_ += f"'Paragraph': '{top[k].page_content}'. "
                 except:
                     pass
             
-                # 지문 (handout)
                 try:
-                    top_content_ += f"'지문': '{top[k].metadata['본문']}'. "
+                    top_content_ += f"'Passage': '{top[k].metadata['passage']}'. "
                 except:
-                    top_content_ += f"'지문': '{top[k].page_content}'. "
+                    top_content_ += f"'Passage': '{top[k].page_content}'. "
                 
-                # 관계 (Relation)
                 try:
                     if top[k].metadata['relation'] != 0:
                         top_content_ += f" '관계': '{top[k].metadata['relation']}.'" 
@@ -166,9 +161,9 @@ def generation(args, retriever_dict, query_db):
             
             elif args.task in [3, 4]:
                 try:
-                    top_content_ += f"'질문': '{top[k].metadata['질문']}'. "
+                    top_content_ += f"'Question': '{top[k].metadata['question']}'. "
                 except:
-                    top_content_ += f"'질문': '{top[k].page_content}'. "
+                    top_content_ += f"'Question': '{top[k].page_content}'. "
                 
                 top_content_ += f"'skill': '{top[k].metadata['skill']}'. 'method': '{top[k].metadata['method']}.'"
                 
@@ -187,52 +182,31 @@ def generation(args, retriever_dict, query_db):
         #############################################################################
         if args.task == 1:
             # paragraph
-            sys_prompt = "'지문'과 '질문'을 보고 아래 '후보' 중 어떠한 '본문'과 가장 높은 관련성을 보이는지 하나 골라 해당 '본문'의 '본문 id'를 답하시오. (이 때, id는 1_1_1_1와 같은 형태이다)"
-            user_prompt = f"'지문' : {query_db['본문'][idx]}. '질문' : {query_db['질문'][idx]}.\n"
-            user_prompt += f"'후보' : {top_content}.\n"
-            user_prompt += "<Paragraph>본문 id<Paragraph> 형태로 답하시오. (예를 들어, <Paragraph>1_1_1_1<Paragraph>)"
+            sys_prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>Looking at the 'Passage’ and the ‘Question’, choose which of the ‘Candidates’ below is most relevant to the 'Paragraph' and answer the ‘Paragraph ID’ of it. (In this case, the ID will be something like 1_1_1_1)"
+            user_prompt = f"'Passage' : {query_db['passage'][idx]}. 'Question' : {query_db['question'][idx]}."
+            user_prompt += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            user_prompt += "\n Answer in form of <Paragraph>Paragraph id<Paragraph>. (For example, <Paragraph>1_1_1_1<Paragraph>)"
         elif args.task == 2:
             # relation
-            sys_prompt = "'지문'과 '질문'을 보고 아래 '후보' 중 어떠한 '본문'과 가장 높은 관련성을 보이며 어떠한 관계를 갖는지 '보기' 중에 하나 고르시오."
-            sys_prompt += "이 때, 본문의 <underline>이나 <bold> 등이 표시된 부분이 존재한다면 해당 부분을 우선적으로 지문과 비교하시오."
-            if args.in_context_sample:
-                sys_prompt += "관계를 맞추기 위한 예시는 '예시'에 제공되어 있으며 이를 참고해 답하시오."
-            
-            user_prompt = f"'지문' : {query_db['본문'][idx]}. '질문' : {query_db['질문'][idx]}.\n"
-            user_prompt += f"'후보' : {top_content}.\n"
-            if args.in_context_sample:
-                # 1.원문 3개
-                user_prompt += f"'예시1-1' : 지문 'This is why some scientists believe it is so important to study woodpeckers. They hammer their beaks into trees at speeds of over 20 kilometers per hour. They can peck about 20 times per second. On average, they knock their heads against hard surfaces about 12,000 times every day. Each one of those impacts is about 100 times as powerful as a hit that would cause serious brain injury to a human. Yet somehow, woodpeckers never suffer any physical or mental damage. Why not?'은 본문 'As time passed, numerous innovations were made, making today’s helmets much safer and stronger than Kafka’s original design. They are built to survive massive impacts while remaining light enough for wearers to play sports or do their jobs. Another innovation is that while old-style helmets were heavy and bulky, causing neck pain, today’s helmets are lighter and more comfortable for the wearer. This is important because people are much more likely to wear helmets if they are comfortable.\nDespite all these innovations, helmets are still far from perfect. Sports players as well as workers at construction sites, factories, and other dangerous work environments frequently experience brain injuries due to the force and frequency of blows to the head. Doctors believe that repeated blows to the brain can cause a variety of physical and mental problems later in life.\nThis is why some scientists believe it is so important to study woodpeckers. They hammer their beaks into trees at speeds of over 20 kilometers per hour. They can peck about 20 times per second. On average, they knock their heads against hard surfaces about 12,000 times every day. Each one of those impacts is about 100 times as powerful as a hit that would cause serious brain injury to a human. Yet somehow, woodpeckers never suffer any physical or mental damage. Why not?'와 1. 원문의 관계를 갖는다. 'This is why some scientists believe it is so important to study woodpeckers.' 이후 내용을 본문에서 발췌하여 변형 없이 그대로 사용하였기 때문이다.\n" # handout_id : 877
-                user_prompt += f"'예시1-2' : 지문 'Living as an older person was a hard experience for both Regina and Trent, but they consider it an invaluable one. This once-in-a-lifetime opportunity helped them understand not only the physical changes that older people go through but also the way society treats them. By walking in someone else’s shoes, Regina and Trent were able to see that the elderly also enjoy life with passion. Moreover, the experience changed the way they conduct their lives.'은 본문 ' “I realized life was too short to just sit around and wait for things to happen to me,” he said. Now that Trent knows how important it is to plan and save for the future, he has decided to find a more stable job and move out of his parents’ house. Trent has also started to exercise regularly so that he can stay healthy and fully enjoy his golden years in the future.\n Living as an older person was a hard experience for both Regina and Trent, but they consider it an invaluable one. This once-in-a-lifetime opportunity helped them understand not only the physical changes that older people go through but also the way society treats them. By walking in someone else’s shoes, Regina and Trent were able to see that the elderly also enjoy life with passion. Moreover, the experience changed the way they conduct their lives. They hope that this documentary will help raise awareness of the problems the elderly continue to face and help young people have a more positive view of growing older.'와 1.원문의 관계를 갖는다. 본문 중간에서 지문에 해당하는 내용을 일체의 변형 없이 발췌하여 그대로 사용하였기 때문이다.\n" # handout_id : 3410
-                user_prompt += f"'예시1-3' : 지문 'First of all, I suggest that you replace sugary drinks such as soft drinks and juice with water. This will reduce your sugar intake and help you to feel full. You can also increase your water intake by eating more fruits and vegetables. Because these foods contain a great deal of water, they can provide up to 20% of the water your body needs each day. In case you get thirsty between meals, you can carry a water bottle with you. You can also flavor your water with fruits or herbs to enjoy it more. Remember, drinking lots of water will help you look and feel better.'은 본문 'Two Drink Well Edward\n Hello, I’m Edward and I’m a nutritionist. Let me ask you a question. This special drink will help you reduce stress, increase energy, and maintain a healthy body weight. What drink am I talking about? In fact, this magical drink is something that you all know. It’s water! Do you also want to have nice skin? Drink water. Water is nature’s own beauty cream. Drinking water hydrates skin cells, giving your skin a healthy glow. Likewise, water is very important for basic body functions because about 70% of our body is water, and we need about 2 liters of water a day. However, many of us don’t get enough water and eventually experience dehydration. For this reason we have to drink plenty of water.\n So how can we increase our water intake? First of all, I suggest that you replace sugary drinks such as soft drinks and juice with water. This will reduce your sugar intake and help you to feel full. You can also increase your water intake by eating more fruits and vegetables. Because these foods contain a great deal of water, they can provide up to 20% of the water your body needs each day. In case you get thirsty between meals, you can carry a water bottle with you. You can also flavor your water with fruits or herbs to enjoy it more. Remember, drinking lots of water will help you look and feel better.'와 1. 원문의 관계를 갖는다. 'First of all, I suggest that you replace sugary drinks such as soft drinks and juice with water.' 이후 내용을 본문에서 변형 없이 발췌하여 그대로 사용하였기 때문이다.\n"  # handout_id : 177
-                # 2. 삭제 3개
-                user_prompt += f"'예시2-1' : 지문 'Until 1966, no one knew that the Mugujeonggwang Daedaranigyeong, the world's oldest printed document, lay inside a container at Bulguksa Temple in Gyeongju, Korea. Experts around the world were shocked that a document printed more than 1,200 years ago could still be around. They were even surprised when the paper was removed from the container. Although the document was printed before 751 CE, it was still in perfect condition. This discovery proved that the paper-making technology of the Unified Silla Kingdom era. (676-935) was more advanced than that of either Japan or China, both of which also had highly developed paper-making technology.'은 본문 'Until 1966, no one knew that the Mugujeonggwang Daedaranigyeong, the world’s oldest printed document, lay inside a container at Bulguksa Temple in Gyeongju, Korea. Experts around the world were shocked that a document printed more than 1,200 years ago could still be around. They were even more surprised when the paper was removed from the container. Although the document was printed before 751 CE, it was still in perfect condition. \nThis discovery proved that the paper-making technology of the Unified Silla Kingdom era (676–935) was more advanced than that of either Japan or China, both of which also had highly developed paper-making technology. How could this paper last for more than 1,000 years without breaking down or becoming damaged? The secret lies in hanji’s amazing physical properties.'와 2.삭제의 관계가 있다. 본문 중간의 'They were even more surprised when the paper was removed from the container.' 문장에서 'more' 단어를 삭제하고 지문으로 사용하였기 때문이다.\n" #handout_id: 1674
-                user_prompt += f"'예시2-2' : 지문 'One of hanji's newest uses is a <underline>(A) t___</underline> for the ears. Customers can now buy speakers that use vibration plates and outside panels made of hanji. Compared to regular speakers, the sound that comes from hanji speakers is stronger and sharper. The paper's thickness and ability to absorb sound help the speakers pick up the smallest vibrations. In addition, the fact that the sound will not change over time because of the strength of hanji makes these speakers a great <underline>(B) p___</underline>. Serious music lovers will really be able to appreciate the great sound quality of these speakers.'은 본문 'Lately, designers have been using hanji to make clothes, socks, and ties. The fabric these designers are using is a blend of hanji yarn with cotton or silk. This blend is almost weightless and keeps its shape better than other materials. It is also washable and eco-friendly. Not only is hanji clothing practical, but it’s also making waves at domestic and international fashion shows. It seems that hanji clothing is here to stay. \nOne of hanji’s newest uses is a treat for the ears. Customers can now buy speakers that use vibration plates and outside panels made of hanji. Compared to regular speakers, the sound that comes from hanji speakers is stronger and sharper. The paper’s thickness and ability to absorb sound help the speakers pick up the smallest vibrations. In addition, the fact that the sound will not change over time because of the strength of hanji makes these speakers a great purchase. Serious music lovers will really be able to appreciate the great sound quality of these speakers.'와 2.삭제의 관계가 있다. 본문의 'One of hanji’s newest uses is a treat for the ears.' 문장에서 'treat' 단어의 일부가 삭제되었으며, 본문의 'In addition, the fact that the sound will not change over time because of the strength of hanji makes these speakers a great purchase.' 문장에서 'purchase' 단어의 일부가 삭제되어 지문으로 사용되었기 때문이다.\n"  # handout_db : 1674
-                user_prompt += f"'예시2-3' : 지문 'Making the decision to be green is not really a big one. <bold>(①)</bold> It is not difficult.\xa0<bold>(②)</bold> Some people think having a green wardrobe is going to cost them more money or be too much trouble. <bold>(③)</bold> You may already have shared clothes with your friends or given your old clothes to charity. <bold>(④)</bold> Or possibly you have reused clothes instead of throwing them out. <bold>(⑤)</bold> Just add 'Reduce' to your going green list, and you will <underline>___</underline>.'은 본문 '6. Making the decision to be green is not really a big one. It is not difficult. Some people think having a green wardrobe is going to cost them more money or be too much trouble. However, chances are that you are already greener than you think. You may already have shared clothes with your friends or given your old clothes to charity. Or possibly you have reused clothes instead of throwing them out. Just add ‘Reduce’ to your going green list, and you will make a real difference to the environment.\n7. Once you start to go green, you will find lots of ways in which you can get into the eco-fashion scene. You will also discover how easy and rewarding being green is. Just knowing that you are doing your part to preserve the planet for the future is one of the best feelings ever.\nFamous sayings about the three R’s\n1. Recycle\nOne person’s trash is another’s treasure.\n2. Reuse\nThere is no zero waste without reuse.\n3. Reduce\nThere’s always a way to do without something.'와 2.삭제의 관계가 있다. 본문 중간의 'However, chances are that you are already greener than you think.' 문장이 삭제되었으며, 'Just add ‘Reduce’ to your going green list, and you will make a real difference to the environment.' 문장에서 'environment' 단어가 삭제되어 __으로 나타났기 때문이다.\n" # handout_id : 745
-                # 3. 교체 및 삽입 3개
-                user_prompt += f"'예시3-1' : 지문 'Without Don’s permit, I would have had to pay a $100,000 fine or ended up in the police station. Soon after dusk, the camp site became very dark. After a barbecue dinner, Maddie and I gazed at the clear sky. The absence of all artificial city lights made the stars in the sky more brilliant and easy to locate. The dense, quiet forest, and rotting logs made it feel as if time had stood still here for centuries. Breaking the silence, Don reminded us not to leave leftover food in the tent because it could attract bears. Imagining a bear lick my face, I got frightened and my romantic night was over. I promptly fled to my tent.'은 본문 ' Upon arriving at the camp site, next to a small creek Maddie’s parents started setting up the tent. So, Maddie and I went to the beach and collected shellfish. I could’ve filled a basket with the shellfish but Don, Maddie’s dad, advised us not to. Don explained that people need a legitimate National Park fishing permit in order to fish or collect shellfish in all Canadian National Parks.\n However, those who are under 16 do not need to obtain the permit as long as they are accompanied by an adult who has one. He also told us that people caught taking undersized seafood have their seafood seized and are fined $100,000 by the judicial system. I was so surprised by the size of the fine that I tipped out my basket in the weeds right away. Without Don’s permit, I would have had to pay a $100,000 fine or ended up in the police station.\n Soon after dusk, the camp site became very dark. After a barbecue dinner, Maddie and I gazed at the clear sky. The absence of all artificial city lights made the stars in the sky more brilliant and easy to locate. The dense, quiet forest, and rotting logs made it feel as if time had stood still here for centuries. Breaking the silence, Don reminded us not to leave leftover food in the tent because it could attract bears. Imagining a bear licking my face, I got frightened and my romantic night was over. I promptly fled to my tent.'와 3.교체 및 삽입의 관계가 있다. 'Imagining a bear licking my face, I got frightened and my romantic night was over. I promptly fled to my tent.'의 'licking' 단어가 'lick'으로 교체되었기 때문이다.\n" # handout_id:20125
-                user_prompt += f"'예시3-2' : 지문 '1. You probably know of great souls who sacrificed <bold>29) [ them / themselves ]</bold> to help others and <bold>30) [ make / making ]</bold> the world a better place to <bold>31) [ live / live in ]</bold>. It may seem <bold>32) [ difficult / difficultly ]</bold> or practically impossible for <bold>33) [ ordinary / ordinarily ]</bold> people to live up to what Dr. Schweitzer did. But small actions <bold>34) [ that / with which ]</bold> we take for our family and friends in our everyday lives can make a difference toward <bold>35) [ create / creating ]</bold> a better world. Today we are going to listen to the stories of two teenagers who have <bold>36) [ taken / been taken ]</bold> such actions.'은 본문 'You probably know of great souls who sacrificed themselves to help others and make the world a better place to live in. It may seem difficult or practically impossible for ordinary people to live up to what Dr. Schweitzer did. But small actions that we take for our family and friends in our everyday lives can make a difference toward creating a better world. Today we are going to listen to the stories of two teenagers who have taken such actions.\nSpreading Kindness with Positive Messages Annie from Ottawa\nHi, everyone. Nice to meet you all here today. I’m Annie from Ottawa. You know what these yellow sticky notes are for and probably use them for many purposes. I am here to tell you how I use them. It’s to encourage people, give them strength, and help them feel happy. When I was in middle school, someone broke into my locker and used my smartphone to post hateful things on my SNS page. It was so hurtful and difficult to overcome. But after a lot of thinking and talking with my parents and closest friends, I concluded that although bullies use words to hurt people, I should use them to encourage others.'와 3.교체 및 삽입 관계가 있다. 'You probably know of great souls who sacrificed themselves to help others and make the world a better place to live in.'의 문장에 'them', 'making', 'live'가 선택지로 삽입되었고, 'It may seem difficult or practically impossible for ordinary people to live up to what Dr. Schweitzer did.'의 문장에 'difficultly', 'ordinarily'가 선택지로 삽입되었고, 'But small actions that we take for our family and friends in our everyday lives can make a difference toward creating a better world.' 문장에 'with which', 'create'가 선택지로 삽입되었으며, 'Today we are going to listen to the stories of two teenagers who have taken such actions.' 문장에 'been taken'이 선택지로 삽입되었기 때문이다.\n" # handout_id:3127
-                user_prompt += f"'예시3-3' : 지문 '1. You probably know of great souls who <underline>123) were sacrificed</underline> themselves to help others and make the world a better place to <underline>124) live</underline>. It may seem <underline>125) difficultly</underline> or <underline>126) practical</underline> impossible for ordinary people to live up to what Dr. Schweitzer did. But small actions <underline>127) where</underline> we take for our family and friends in our everyday lives can make a <underline>128) different</underline> toward creating a better world. Today we are going to <underline>129) listening</underline> to the stories of two teenagers <underline>130) have</underline> taken such actions.'은 본문 'You probably know of great souls who sacrificed themselves to help others and make the world a better place to live in. It may seem difficult or practically impossible for ordinary people to live up to what Dr. Schweitzer did. But small actions that we take for our family and friends in our everyday lives can make a difference toward creating a better world. Today we are going to listen to the stories of two teenagers who have taken such actions.\nSpreading Kindness with Positive Messages Annie from Ottawa\nHi, everyone. Nice to meet you all here today. I’m Annie from Ottawa. You know what these yellow sticky notes are for and probably use them for many purposes. I am here to tell you how I use them. It’s to encourage people, give them strength, and help them feel happy. When I was in middle school, someone broke into my locker and used my smartphone to post hateful things on my SNS page. It was so hurtful and difficult to overcome. But after a lot of thinking and talking with my parents and closest friends, I concluded that although bullies use words to hurt people, I should use them to encourage others.'와 3.교체 및 삽입의 관계를 갖는다. 'You probably know of great souls who sacrificed themselves to help others and make the world a better place to live in.' 문장에서 'sacrificed'를 'were scarificed', 'live in'을 'live'로 교체하였으며, 'It may seem difficult or practically impossible for ordinary people to live up to what Dr. Schweitzer did.' 문장에서 'difficult'를 'difficulty'로, 'practically'를 'practical'로 교체하였고, 'But small actions that we take for our family and friends in our everyday lives can make a difference toward creating a better world.' 문장에서 'that'을 'where'로, 'difference'를 'different'로 교체하였으며, 'Today we are going to listen to the stories of two teenagers who have taken such actions.' 문장에서 'listen'을 'listening'으로 교체하였기 때문이다.\n" # handout_id:3226
-                # 4. 복합 2개
-                user_prompt += f"'예시4-1' : 지문 'As time passed, numerous innovations <underline>① were made</underline>, <underline>🅐 making</underline> today’s helmets <underline>⒜___</underline> safer and stronger than Kafka’s original design. They <underline>② built</underline> to survive massive impacts while remaining light enough for wearers to play sports or <underline>③ do</underline> their jobs. Another innovation is that <bold>⑴ [ while / as ]</bold> old-style helmets were heavy and bulky, <underline>🅑 causing</underline> neck pain, today’s helmets are lighter and more comfortable for the wearer.'은 본문 'As time passed, numerous innovations were made, making today’s helmets much safer and stronger than Kafka’s original design. They are built to survive massive impacts while remaining light enough for wearers to play sports or do their jobs. Another innovation is that while old-style helmets were heavy and bulky, causing neck pain, today’s helmets are lighter and more comfortable for the wearer.'과 4.복합 관계를 갖는다. 'As time passed, numerous innovations were made, making today’s helmets much safer and stronger than Kafka’s original design.' 문장에서 'much'가 삭제되었으며,  'They are built to survive massive impacts while remaining light enough for wearers to play sports or do their jobs.' 문장에서 'are built'가 'built'로 교체되었으며, 'Another innovation is that while old-style helmets were heavy and bulky, causing neck pain, today’s helmets are lighter and more comfortable for the wearer.' 문장에서 'as'가 선택지로 추가되었기 때문에, 2.삭제와 3.교체 및 삽입 관계를 동시에 갖는다. 따라서 주어진 본문과 지문은 4.복합 관계를 갖는다.\n" # handout_id : 853
-                user_prompt += f"'예시4-2' : 지문 'Drinking water hydrates skin cells, giving your skin a healthy glow. Likewise, water is very important for basic body functions because about 70% of our body is water, and we need about 2 liters of water a day. However, many of us don’t get enough water and eventually suffer <underline>___</underline>. For this reason we have to drink plenty of water. So how can we increase our water intake? First of all, I suggest that you replace sugary drinks such as soft drinks and juice with water.'은 본문 'Drinking water hydrates skin cells, giving your skin a healthy glow. Likewise, water is very important for basic body functions because about 70% of our body is water, and we need about 2 liters of water a day. However, many of us don’t get enough water and eventually experience dehydration. For this reason we have to drink plenty of water.\n So how can we increase our water intake? First of all, I suggest that you replace sugary drinks such as soft drinks and juice with water.'와 4.복합 관계를 갖는다. 'However, many of us don’t get enough water and eventually experience dehydration.' 문장에서 'experience'는 'suffer'로 교체되었고, 'dehydration'은 삭제되었다. 즉, 2.삭제와 3.교체 및 삽입 관계를 동시에 갖기 때문에 해당 본문과 지문은 4.복합의 관계를 갖는다.\n" # handout_id:22
-        
-            user_prompt += "'보기' : [1: 원문 (본문의 일부를 변형없이 발췌 혹은 본문 전체를 그대로 지문으로 사용), 2: 삭제 (본문에서 특정 단어/문장을 삭제하여 지문으로 사용), 3: 교체 및 삽입 (본문에 없던 단어/문장을 추가하여 지문으로 사용 ), 4. 복합 (원문, 삭제, 삽입 관계가 복합적으로 적용)].\n"
-            user_prompt += "<Relation>관계(int)<Relation> 형태로 답하고 (예를 들어, <Relation>1<Relation>), 해당 관계를 고른 이유를 <Description>관계정보를 고른 이유<Description> 형태로 자세히 서술하시오."
+            sys_prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>Looking at the 'Passage' and the 'Question', choose which of the 'Candidates' below is the most relevant to the 'Paragraph' and choose the relationship in 'Options'."
+            user_prompt = f"'Passage' : {query_db['passge'][idx]}. 'Question' : {query_db['question'][idx]}."
+            user_prompt += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            user_prompt += "'Options' : [1: Original (excerpting a part of the text without any changes or using the whole text as a passage), 2. Delete (deleting certain words/sentences from the text and using them as a passage), 3. Insert (adding words/sentences that were not in the text and using them as a passage), 4. Compound (a combination of original, deletion and insertion)]."
+            user_prompt += "\n Answer in form of <Relation>Answer(int)<Relation>(For example, <Relation>1<Relation>), and Provide a detailed description of why you chose the relationship in the form of a <Description>Reason for choosing the relationship information<Description>."
         elif args.task == 3:
-            # skill : 문제를 풀기 위해 필요한 능력
-            sys_prompt = "'참고'를 참고하여 '질문'을 보고 이 문제를 풀기 위한 능력을 '보기' 중에 하나 고르시오."
-            user_prompt = f"'질문' : {query_db['질문'][idx]}.\n"
-            user_prompt += f"'참고' : {top_content}.\n"
-            user_prompt += f"'보기' : [101: 어휘 뜻 이해 (어휘의 뜻을 이해한다.), 102: 영영 풀이 (어휘의 뜻을 영어로 이해한다.), 103: 어휘 혼합, 201: 용법 이해 (용법을 이해한다.), 202: 용법일치불일치 판단 (용법이 서로 같은지 다른지 판단한다.), 203: 문법 혼합, 301: 목적 이해 (글의 목적을 이해한다.), 302: 주제 이해 (글의 주제를 이해한다.), 303: 제목 이해 (글의 제목을 이해한다.), 304: 주장 이해 (글의 주장을 이해한다.), 305: 요지 이해 (글의 요지를 이해한다.), 306: 의미 이해 (글의 의미를 이해한다.), 307: 분위기 이해 (글의 분위기를 이해한다.), 308: 심경 이해 (글의 화자의 심경을 이해한다.), 309: 심경 변화 이해 (글의 화자의 심경 변화를 이해한다.), 310: 어조 이해 (글의 어조를 이해한다.), 311: 순서 이해 (글의 내용을 이해한다.), 312: 대상 이해 (지칭하는 대상을 이해한다), 313: 내용이해 혼합, 401: 내용유추 (글의 내용을 유추한다.), 402: 순서유추 (글의 순서를 유추한다.), 403: 어휘유추 (특정 위치의 어휘를 유추한다.), 404: 연결어유추 (특정 위치의 연결어를 유추한다.), 405: 지칭유추 (지칭하는 대상을 유추한다.), 406: 어휘유추 전반 (유추 내용을 복합적으로 묻는 경우), 407: 내용일치불일치 판단 (내용이 서로 같은지 다른지 판단한다.), 408: 요약 (글을 요약한다.), 409: 번역 (글을 한글로 변역한다.), 410: 영작 (글을 영어로 작문한다.), 411: 내용응용 혼합, 501: 영역통합, 601: 기타].\n"
-            user_prompt += f"<Skill>정답<Skill> 형태로 답하라. (예시, <Skill>405<Skill>)"
+            # skill
+            sys_prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>See ‘Candidates’ to view the ‘Question’ and select one of the ‘Options’ for your ability to solve this question."
+            user_prompt = f"'Question' : {query_db['question'][idx]}"
+            user_prompt += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            user_prompt += f"'Options' : [101: Understand the meaning of vocabulary (Understand the meaning of vocabulary), 102: Solve in English (Understand the meaning of vocabulary in English), 103: Mixed vocabulary, 201: Understand usage (Understand the usage), 202: Determine agreement or disagreement (Determine whether the usage is the same or different), 203: Mixed grammar, 301: Understand purpose (Understand the purpose of the text), 302: Understand topic (Understand the topic of the text. ), 303: Understand the title (Understand the title of a text), 304: Understand the claim (Understand the claim of a text), 305: Understand the gist (Understand the gist of a text), 306: Understand the meaning (Understand the meaning of a text), 307: Understand the mood (Understand the mood of a text), 308: Understand the mood of the speaker (Understand the mood of the speaker), 309: Understand the mood changes (Understand the mood changes of the speaker), 310: Understand the tone (Understand the tone of a text), 310: Understand the mood changes of a text. ), 310: Understanding Tone (Understand the tone of a text), 311: Understanding Order (Understand the order of a text), 312: Understanding the Object (Understand the object being referred to), 313: Mixing Content Understanding, 401: Inferring Content (Infer the content of a text), 402: Inferring Order (Infer the order of a text), 403: Inferring Lexicality (Infer the lexicality of a text), 404: Inferring Linking Words (Infer the linking words of a text), 405: Inferring Reference (Infer the reference of a text). ), 405: Referential inference (infer the referent), 406: Overall lexical inference (when asked for a combination of inferences), 407: Content matching (determine whether the content is the same or different), 408: Summarise (summarise the text), 409: Translation (translate the text into Korean), 410: English composition (write the text in English), 411: Mixed content application, 501: Domain integration, 601: Others]"
+            user_prompt += f"\nAnswer in form of <Skill>Answer(int)<Skill>. (For example, <Skill>405<Skill>)"
         elif args.task == 4:
-            # method : 해당 문제의 '질문'이 학습자의 역량을 검증하기 위해 어떤 방식으로 질문하는지를 의미
-            sys_prompt = "'참고'를 참고하여 '질문'을 보고 해당 문제가 학습자의 역량을 검증하기 위해 어떠한 방식으로 질문하는지 '보기' 중에 하나 고르시오."
-            user_prompt = f"'질문' : {query_db['질문'][idx]}.\n"
-            user_prompt += f"'참고' : {top_content}.\n"
-            user_prompt += f"'보기' : [1: 맞는 것 찾기(단수) (맞는 것을 찾는다.), 2: 맞는 것 찾기(복수) (맞는 것을 모두 찾는다.), 3: 맞는 것 세기(개수) (맞는 것을 찾아서 개수를 센다.), 4: 틀린 것 찾기(단수) (틀린 것을 찾는다.), 5: 틀린 것 찾기(복수) (틀린 것을 모두 찾는다.), 6: 틀린 것 세기(개수) (틀린 것을 찾아서 개수를 센다.), 7: 다른 것 찾기 (다른 것을 찾는다.), 8: 맞는 위치 찾기 (맞는 위치를 찾는다.), 9: 바른 배열 찾기 (맞는 배열을 찾는다.), 10: 바른 조합 찾기 (맞는 조합을 찾는다.), 11: 어휘 쓰기(보기에서 골라) (맞는 어휘를 보기에서 찾아 쓴다.), 12: 어휘 쓰기(본문에서 찾아) (맞는 어휘를 본문에서 찾아 쓴다.), 13: 어휘 쓰기(고쳐/직접) (맞는 어휘로 고쳐쓰거나 직접쓴다.), 14: 문장 쓰기 (문장을 쓴다.), 15: 바른 배열 쓰기 (맞는 배열하여 쓴다.), 16: 혼합, 17: 기타].\n"
-            user_prompt += f"<Method>정답<Method> 형태로 답하라. (예시, <Method>5<Method>)"
+            # method
+            sys_prompt = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>See ‘Candidates’ and select one of the ‘Options’ options to see how the question asks to validate the learner's competency."
+            user_prompt = f"'Question' : {query_db['question'][idx]}"
+            user_prompt += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            user_prompt += f"'Options' : [1: Find the correct one (singular) (find the correct one), 2: Find the correct one (plural) (find all the correct ones), 3: Count the correct ones (count) (find the correct ones and count them), 4: Find the incorrect one (singular) (find the incorrect one. ), 5: Find the wrong ones (plural) (Find all the wrong ones), 6: Count the wrong ones (count) (Find the wrong ones and count them), 7: Find something else (find something else), 8: Find the right position (find the right position), 9: Find the right arrangement (find the right arrangement). ), 9: Find the right arrangement (Find the right arrangement.), 10: Find the right combination (Find the right combination.), 11: Write the vocabulary (Choose from the view) (Find the correct vocabulary in the view and write it.), 12: Write the vocabulary (Find in the text) (Find the correct vocabulary in the text and write it. ), 13: Write vocabulary (correct/direct) (Correct or write with the correct vocabulary), 14: Write a sentence (Write a sentence), 15: Write in the correct arrangement (Write in the correct arrangement), 16: Mixed, 17: Other]"
+            user_prompt += f"\nAnswer in form of <Method>Answer(int)<Method>. (For example, <Method>5<Method>)"
         #############################################################################
         #############################################################################
         
@@ -281,8 +255,6 @@ def generation(args, retriever_dict, query_db):
                 completion_window="24h"
                 )
     print(f"Batch API job ID : {batch_job.id}")
-    if not args.ignore_wandb:
-        wandb.config.update({f"batch_job_id": batch_job.id})
         
     ## checking batch status
     while True:
@@ -386,8 +358,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--openai_api_key',type=str, default=None, required=True)
     
-    parser.add_argument('--query_path', type=str, default="./data/solvook_handout_te.csv")
-    parser.add_argument('--vector_db_path', type=str, default="./data/vector_db.json")
+    parser.add_argument('--query_path', type=str, default=".")
+    parser.add_argument('--vector_db_path', type=str, default=".")
     
     parser.add_argument('--llm_model', type=str, default='gpt-4o')
     parser.add_argument('--temperature', type=float, default=0.0)
@@ -400,11 +372,6 @@ if __name__ == "__main__":
     parser.add_argument('--result_path', type=str, default='./exp_result')
     
     parser.add_argument('--only_train', action='store_true', default=False)
-    
-    ## wandb
-    parser.add_argument("--ignore_wandb", action='store_true', default=False)
-    parser.add_argument("--wandb_project", type=str, default="tips_2024")
-    parser.add_argument("--wandb_entity", type=str, default="sungjun98")
 
     
     args = parser.parse_args()
@@ -415,14 +382,6 @@ if __name__ == "__main__":
     print(f"Set save path on {args.result_path}")
     os.makedirs(args.result_path, exist_ok=True)
     
-    
-    ## set wandb
-    if not args.ignore_wandb:
-        wandb.init(project=args.wandb_project, entity=args.wandb_entity)
-        wandb.config.update(args)
-        wandb.run.name = save_name
-    
-    ### [Step 1] Load Data and Make Loader ##embeddings as unique 본문, 질문, paragraphs
     print("[Step 1] Load Data!!")
     vector_db, query_db = load_solvook_data(args)
     
@@ -433,31 +392,3 @@ if __name__ == "__main__":
     print("[Step 2] Start generation...")
     generation(args, vector_db, query_db)
     print("Finally End generation!!")
-    
-    
-    if not args.only_train:
-        print("[Step 3] Evaluate")
-        from eval import calculate_paragraph_acc, calculate_method_acc, calculate_skill_acc, calculate_relation_acc
-        answer_db = pd.read_csv(osp.join(args.result_path, "answer_df.csv"))
-        
-        textbook_cor, story_cor, unit_cor, parap_cor,total_parap_cor, total_parap_acc = calculate_paragraph_acc(answer_db, query_db)
-        skill_cor, skill_acc = calculate_skill_acc(answer_db, query_db)
-        method_cor, method_acc = calculate_method_acc(answer_db, query_db)
-        relation_cor, relation_acc = calculate_relation_acc(answer_db, query_db)
-        
-        if not args.ignore_wandb:
-            wandb.run.summary['textbook_cor'] = sum(textbook_cor)
-            wandb.run.summary['story_cor'] = sum(story_cor)
-            wandb.run.summary['unit_cor'] = sum(unit_cor)
-            wandb.run.summary['parap_cor'] = sum(parap_cor)
-            wandb.run.summary['total_parap_cor'] = total_parap_cor
-            wandb.run.summary['parap acc.'] = total_parap_acc
-            
-            wandb.run.summary['skill_cor'] = skill_cor
-            wandb.run.summary['skill acc.'] = skill_acc
-            
-            wandb.run.summary['method_cor'] = method_cor
-            wandb.run.summary['method acc.'] = method_acc
-            
-            wandb.run.summary['relation_cor'] = relation_cor
-            wandb.run.summary['relation acc.'] = relation_acc

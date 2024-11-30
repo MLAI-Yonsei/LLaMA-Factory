@@ -15,7 +15,7 @@ from tqdm import tqdm
 import os.path as osp
 
 
-### [Step 1] Load Data and Make Loader ##embeddings as unique 본문, 질문, paragraphs
+### [Step 1] Load Data and Make Loader ##embeddings as unique passage, question, paragraphs
 def load_solvook_data(args):
     # load vector db
     with open(args.vector_db_path, "r") as f:
@@ -24,7 +24,7 @@ def load_solvook_data(args):
     # load query
     query_db = pd.read_csv(args.query_path)
     for i in range(len(query_db)):
-        query_db.loc[i, 'query'] = f'"본문" : "{query_db.loc[i, "본문"]}", "질문" : "{query_db.loc[i, "질문"]}"'
+        query_db.loc[i, 'query'] = f'"Passage" : "{query_db.loc[i, "passage"]}", "Question" : "{query_db.loc[i, "question"]}"'
     
     if args.task == 2:
         query_db = query_db[query_db['relation']!=0].reset_index()
@@ -39,10 +39,10 @@ def generation(args, retriever_dict, query_db):
     query_list = list()
     for idx in tqdm(range(len(query_db))):
         #### Top-K search -----------------------------------------------------------------------------------------
-        top_ques = retriever_dict['ques_db_retriever'].invoke(query_db['질문'][idx])      # 질문 v.s. 질문*
+        top_ques = retriever_dict['ques_db_retriever'].invoke(query_db['question'][idx])
         if args.task in [1,2]:
-            top_mt = retriever_dict['mt_db_retriever'].invoke(query_db['본문'][idx])          # 본문 v.s. 본문*
-            top_parap = retriever_dict['parap_db_retriever'].invoke(query_db['본문'][idx])    # paragraph v.s. 본문*
+            top_mt = retriever_dict['mt_db_retriever'].invoke(query_db['passage'][idx])
+            top_parap = retriever_dict['parap_db_retriever'].invoke(query_db['passage'][idx])
         
         top = top_ques
         if args.task in [1,2]:
@@ -54,32 +54,32 @@ def generation(args, retriever_dict, query_db):
         for k in range(len(top)):
             top_content_ = f"["
             if args.task in [1, 2]:
-                top_content_ = f"'본문 id': '{top[k].metadata['textbook_id']}_{top[k].metadata['unit_id']}_{top[k].metadata['story_id']}_{top[k].metadata['paragraph_id']}'. "
+                top_content_ = f"'Paragraph id': '{top[k].metadata['textbook_id']}_{top[k].metadata['unit_id']}_{top[k].metadata['story_id']}_{top[k].metadata['paragraph_id']}'. "
 
                 try:
                     try:
-                        top_content_ += f"'본문': '{top[k].metadata['paragraphs']}'. "            
+                        top_content_ += f"'Paragraph': '{top[k].metadata['paragraphs']}'. "            
                     except:
-                        top_content_ += f"'본문': '{top[k].page_content}'. "
+                        top_content_ += f"'Paragraph': '{top[k].page_content}'. "
                 except:
                     pass
             
                 try:
-                    top_content_ += f"'지문': '{top[k].metadata['본문']}'. "
+                    top_content_ += f"'Passage': '{top[k].metadata['Passage']}'. "
                 except:
-                    top_content_ += f"'지문': '{top[k].page_content}'. "
+                    top_content_ += f"'Passage': '{top[k].page_content}'. "
                 
                 try:
                     if top[k].metadata['relation'] != 0:
-                        top_content_ += f" '관계': '{top[k].metadata['relation']}.'" 
+                        top_content_ += f" 'Relation': '{top[k].metadata['relation']}.'" 
                 except:
                     pass
                 
             elif args.task in [3, 4]:
                 try:
-                    top_content_ += f"'질문': '{top[k].metadata['질문']}'. "
+                    top_content_ += f"'Question': '{top[k].metadata['question']}'. "
                 except:
-                    top_content_ += f"'질문': '{top[k].page_content}'. "
+                    top_content_ += f"'Question': '{top[k].page_content}'. "
                 
                 top_content_ += f"'skill': '{top[k].metadata['skill']}'. 'method': '{top[k].metadata['method']}.'"
                 
@@ -93,34 +93,34 @@ def generation(args, retriever_dict, query_db):
         #### Make prompts --------------------------------------------------------------------------------------
         if args.task == 1:
             # paragraph
-            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>'지문'과 '질문'을 보고 아래 '후보' 중 어떠한 '본문'과 가장 높은 관련성을 보이는지 하나 골라 해당 '본문'의 '본문 id'를 답하시오. (이 때, id는 1_1_1_1와 같은 형태이다)"
-            query_['input'] = f"'지문' : {query_db['본문'][idx]}. '질문' : {query_db['질문'][idx]}."
-            query_['input'] += f"\n'후보' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
-            query_['input'] += "<Paragraph>본문 id<Paragraph> 형태로 답하시오. (예를 들어, <Paragraph>1_1_1_1<Paragraph>)"
+            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>Looking at the 'Passage’ and the ‘Question’, choose which of the ‘Candidates’ below is most relevant to the 'Paragraph' and answer the ‘Paragraph ID’ of it. (In this case, the ID will be something like 1_1_1_1)"
+            query_['input'] = f"'Passage' : {query_db['passage'][idx]}. 'Question' : {query_db['question'][idx]}."
+            query_['input'] += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            query_['input'] += "\n Answer in form of <Paragraph>Paragraph id<Paragraph>. (For example, <Paragraph>1_1_1_1<Paragraph>)"
             query_['output'] = f"{str(query_db['textbook_id'][idx])}_{str(query_db['unit_id'][idx])}_{str(query_db['story_id'][idx])}_{str(query_db['paragraph_id'][idx])}"
         elif args.task == 2:
             # relation
-            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>'지문'과 '질문'을 보고 아래 '후보' 중 어떠한 '본문'과 가장 높은 관련성을 보이며 어떠한 관계를 갖는지 '보기' 중에 하나 고르시오."
-            query_['input'] = f"'지문' : {query_db['본문'][idx]}. '질문' : {query_db['질문'][idx]}."
-            query_['input'] += f"\n'후보' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
-            query_['input'] += "'보기' : [1: 원문 (본문의 일부를 변형없이 발췌 혹은 본문 전체를 그대로 지문으로 사용), 2: 삭제 (본문에서 특정 단어/문장을 삭제하여 지문으로 사용), 3: 삽입 (본문에 없던 단어/문장을 추가하여 지문으로 사용 ), 4. 복합 (원문, 삭제, 삽입 관계가 복합적으로 적용)]"
-            query_['input'] += "\n <Relation>관계(int)<Relation> 형태로 답하고 (예를 들어, <Relation>1<Relation>), 해당 관계를 고른 이유를 <Description>관계정보를 고른 이유<Description> 형태로 자세히 서술하시오."
+            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>Looking at the 'Passage' and the 'Question', choose which of the 'Candidates' below is the most relevant to the 'Paragraph' and choose the relationship in 'Options'."
+            query_['input'] = f"'Passage' : {query_db['passge'][idx]}. 'Question' : {query_db['question'][idx]}."
+            query_['input'] += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            query_['input'] += "'Options' : [1: Original (excerpting a part of the text without any changes or using the whole text as a passage), 2. Delete (deleting certain words/sentences from the text and using them as a passage), 3. Insert (adding words/sentences that were not in the text and using them as a passage), 4. Compound (a combination of original, deletion and insertion)]."
+            query_['input'] += "\n Answer in form of <Relation>Answer(int)<Relation>(For example, <Relation>1<Relation>), and Provide a detailed description of why you chose the relationship in the form of a <Description>Reason for choosing the relationship information<Description>."
             query_['output'] = str(query_db['relation'][idx])
         elif args.task == 3:
-            # skill : 문제를 풀기 위해 필요한 능력
-            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>'참고'를 참고하여 '질문'을 보고 이 문제를 풀기 위한 능력을 '보기' 중에 하나 고르시오."
-            query_['input'] = f"'질문' : {query_db['질문'][idx]}"
-            query_['input'] += f"\n'참고' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
-            query_['input'] += f"'보기' : [101: 어휘 뜻 이해 (어휘의 뜻을 이해한다.), 102: 영영 풀이 (어휘의 뜻을 영어로 이해한다.), 103: 어휘 혼합, 201: 용법 이해 (용법을 이해한다.), 202: 용법일치불일치 판단 (용법이 서로 같은지 다른지 판단한다.), 203: 문법 혼합, 301: 목적 이해 (글의 목적을 이해한다.), 302: 주제 이해 (글의 주제를 이해한다.), 303: 제목 이해 (글의 제목을 이해한다.), 304: 주장 이해 (글의 주장을 이해한다.), 305: 요지 이해 (글의 요지를 이해한다.), 306: 의미 이해 (글의 의미를 이해한다.), 307: 분위기 이해 (글의 분위기를 이해한다.), 308: 심경 이해 (글의 화자의 심경을 이해한다.), 309: 심경 변화 이해 (글의 화자의 심경 변화를 이해한다.), 310: 어조 이해 (글의 어조를 이해한다.), 311: 순서 이해 (글의 내용을 이해한다.), 312: 대상 이해 (지칭하는 대상을 이해한다), 313: 내용이해 혼합, 401: 내용유추 (글의 내용을 유추한다.), 402: 순서유추 (글의 순서를 유추한다.), 403: 어휘유추 (특정 위치의 어휘를 유추한다.), 404: 연결어유추 (특정 위치의 연결어를 유추한다.), 405: 지칭유추 (지칭하는 대상을 유추한다.), 406: 어휘유추 전반 (유추 내용을 복합적으로 묻는 경우), 407: 내용일치불일치 판단 (내용이 서로 같은지 다른지 판단한다.), 408: 요약 (글을 요약한다.), 409: 번역 (글을 한글로 변역한다.), 410: 영작 (글을 영어로 작문한다.), 411: 내용응용 혼합, 501: 영역통합, 601: 기타]"
-            query_['input'] += f"\n<Skill>정답<Skill> 형태로 답하라. (예시, <Skill>405<Skill>)"
+            # skill
+            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>See ‘Candidates’ to view the ‘Question’ and select one of the ‘Options’ for your ability to solve this question."
+            query_['input'] = f"'Question' : {query_db['question'][idx]}"
+            query_['input'] += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            query_['input'] += f"'Options' : [101: Understand the meaning of vocabulary (Understand the meaning of vocabulary), 102: Solve in English (Understand the meaning of vocabulary in English), 103: Mixed vocabulary, 201: Understand usage (Understand the usage), 202: Determine agreement or disagreement (Determine whether the usage is the same or different), 203: Mixed grammar, 301: Understand purpose (Understand the purpose of the text), 302: Understand topic (Understand the topic of the text. ), 303: Understand the title (Understand the title of a text), 304: Understand the claim (Understand the claim of a text), 305: Understand the gist (Understand the gist of a text), 306: Understand the meaning (Understand the meaning of a text), 307: Understand the mood (Understand the mood of a text), 308: Understand the mood of the speaker (Understand the mood of the speaker), 309: Understand the mood changes (Understand the mood changes of the speaker), 310: Understand the tone (Understand the tone of a text), 310: Understand the mood changes of a text. ), 310: Understanding Tone (Understand the tone of a text), 311: Understanding Order (Understand the order of a text), 312: Understanding the Object (Understand the object being referred to), 313: Mixing Content Understanding, 401: Inferring Content (Infer the content of a text), 402: Inferring Order (Infer the order of a text), 403: Inferring Lexicality (Infer the lexicality of a text), 404: Inferring Linking Words (Infer the linking words of a text), 405: Inferring Reference (Infer the reference of a text). ), 405: Referential inference (infer the referent), 406: Overall lexical inference (when asked for a combination of inferences), 407: Content matching (determine whether the content is the same or different), 408: Summarise (summarise the text), 409: Translation (translate the text into Korean), 410: English composition (write the text in English), 411: Mixed content application, 501: Domain integration, 601: Others]"
+            query_['input'] += f"\nAnswer in form of <Skill>Answer(int)<Skill>. (For example, <Skill>405<Skill>)"
             query_['output'] = str(query_db['skill'][idx])
         elif args.task == 4:
-            # method : 해당 문제의 '질문'이 학습자의 역량을 검증하기 위해 어떤 방식으로 질문하는지를 의미
-            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>'참고'를 참고하여 '질문'을 보고 해당 문제가 학습자의 역량을 검증하기 위해 어떠한 방식으로 질문하는지 '보기' 중에 하나 고르시오."
-            query_['input'] = f"'질문' : {query_db['질문'][idx]}"
-            query_['input'] += f"\n'참고' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
-            query_['input'] += f"'보기' : [1: 맞는 것 찾기(단수) (맞는 것을 찾는다.), 2: 맞는 것 찾기(복수) (맞는 것을 모두 찾는다.), 3: 맞는 것 세기(개수) (맞는 것을 찾아서 개수를 센다.), 4: 틀린 것 찾기(단수) (틀린 것을 찾는다.), 5: 틀린 것 찾기(복수) (틀린 것을 모두 찾는다.), 6: 틀린 것 세기(개수) (틀린 것을 찾아서 개수를 센다.), 7: 다른 것 찾기 (다른 것을 찾는다.), 8: 맞는 위치 찾기 (맞는 위치를 찾는다.), 9: 바른 배열 찾기 (맞는 배열을 찾는다.), 10: 바른 조합 찾기 (맞는 조합을 찾는다.), 11: 어휘 쓰기(보기에서 골라) (맞는 어휘를 보기에서 찾아 쓴다.), 12: 어휘 쓰기(본문에서 찾아) (맞는 어휘를 본문에서 찾아 쓴다.), 13: 어휘 쓰기(고쳐/직접) (맞는 어휘로 고쳐쓰거나 직접쓴다.), 14: 문장 쓰기 (문장을 쓴다.), 15: 바른 배열 쓰기 (맞는 배열하여 쓴다.), 16: 혼합, 17: 기타]"
-            query_['input'] += f"\n<Method>정답<Method> 형태로 답하라. (예시, <Method>5<Method>)"
+            # method
+            query_['instruction'] = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>See ‘Candidates’ and select one of the ‘Options’ options to see how the question asks to validate the learner's competency."
+            query_['input'] = f"'Question' : {query_db['question'][idx]}"
+            query_['input'] += f"\n'Candidates' : {top_content}<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            query_['input'] += f"'Options' : [1: Find the correct one (singular) (find the correct one), 2: Find the correct one (plural) (find all the correct ones), 3: Count the correct ones (count) (find the correct ones and count them), 4: Find the incorrect one (singular) (find the incorrect one. ), 5: Find the wrong ones (plural) (Find all the wrong ones), 6: Count the wrong ones (count) (Find the wrong ones and count them), 7: Find something else (find something else), 8: Find the right position (find the right position), 9: Find the right arrangement (find the right arrangement). ), 9: Find the right arrangement (Find the right arrangement.), 10: Find the right combination (Find the right combination.), 11: Write the vocabulary (Choose from the view) (Find the correct vocabulary in the view and write it.), 12: Write the vocabulary (Find in the text) (Find the correct vocabulary in the text and write it. ), 13: Write vocabulary (correct/direct) (Correct or write with the correct vocabulary), 14: Write a sentence (Write a sentence), 15: Write in the correct arrangement (Write in the correct arrangement), 16: Mixed, 17: Other]"
+            query_['input'] += f"\nAnswer in form of <Method>Answer(int)<Method>. (For example, <Method>5<Method>)"
             query_['output'] = str(query_db['method'][idx])
     
         query_list.append(query_)

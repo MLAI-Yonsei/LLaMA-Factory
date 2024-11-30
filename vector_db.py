@@ -16,13 +16,13 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 
-### [Step 1] Load Data and Make Loader ##embeddings as unique 본문, 질문, paragraphs
+### [Step 1] Load Data and Make Loader ##embeddings as unique passage, question, paragraphs
 def load_solvook_data(args):
     ## make loader
     db = pd.read_csv(args.db_path)
 
-    mt_loader = DataFrameLoader(db, page_content_column="본문")
-    ques_loader = DataFrameLoader(db, page_content_column="질문")
+    mt_loader = DataFrameLoader(db, page_content_column="passage")
+    ques_loader = DataFrameLoader(db, page_content_column="question")
     parap_loader = DataFrameLoader(db, page_content_column="paragraphs")
 
     mt_data_ = mt_loader.load()
@@ -58,7 +58,7 @@ def text_split_solvook(args, data_dict):
 
 
 
-### [Step 3] Make 본문, 질문, paragraphs loader to embedding
+### [Step 3] Make passage, question, paragraphs loader to embedding
 def make_embedding(args, docs_dict):
     embeddings = OpenAIEmbeddings(openai_api_key=args.openai_api_key, model=args.embedding_model, tiktoken_model_name='cl100k_base')
 
@@ -82,7 +82,6 @@ def make_embedding(args, docs_dict):
 
 
 ### [Step 4] Get Top-K docs and bring pairs of the docs
-## 1) paragraph - 본문*, 2) 본문 - 본문*, 3) 질문 - 질문* top-K//3 search each
 def top_k_search(args, db_dict):
     if args.task in [0, 1, 2]:
         EACH_K_1st = args.top_k // 3
@@ -141,10 +140,8 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--openai_api_key',type=str, default=None, required=True)
     
-    parser.add_argument('--query_path', type=str, default="./data/solvook_handout_te.csv",
-                    help="path for solvook_handout_te.csv")
-    parser.add_argument('--db_path', type=str, default="./data/solvook_handout_tr.csv",
-                    help="path for solvook_handout_tr.csv")
+    parser.add_argument('--query_path', type=str, default=".",)
+    parser.add_argument('--db_path', type=str, default=".",)
     
     parser.add_argument('--chunk_size', type=int, default=8000)
     parser.add_argument('--chunk_overlap', type=int, default=200)
@@ -173,12 +170,10 @@ if __name__ == "__main__":
     print("[Step 2] Text Split!!")
     docs_dict = text_split_solvook(args, data_dict)
     
-    ### [Step 3] Make 본문, 질문, paragraphs loader to embedding
     print("[Step 3] Make embedding!!")
     embeddings, db_dict = make_embedding(args, docs_dict)
     
     ### [Step 4] Get Top-K docs and bring pairs of the docs
-    ## 1) paragraph - 본문*, 2) 본문 - 본문*, 3) 질문 - 질문* top-K search
     print("[Step 4] Set Top-K search class!!")
     retriever_dict = top_k_search(args, db_dict)
     
